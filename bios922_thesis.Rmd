@@ -1,0 +1,971 @@
+---
+title: "bios992_thesis"
+author: "Alice Yu"
+date: "`r Sys.Date()`"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(caret)
+library(flextable)
+library(gtsummary)
+library(haven)
+library(rpart)
+library(randomForest)
+library(ggplot2)
+library(GGally)
+library(varImp)
+library(pROC)
+```
+
+## Read in datasets 
+Data sets originate from NHANES during the 2017-March 2020 Pre-Pandemic 
+
+```{r}
+demo <- read_xpt("~/bios992/P_DEMO.XPT")
+dpq <- read_xpt("~/bios992/P_DPQ.XPT")
+slq <- read_xpt("~/bios992/P_SLQ.XPT")
+
+#convert to data frame
+demo <- demo %>% data.frame()
+dpq <- dpq %>% data.frame()
+slq <- slq %>% data.frame()
+```
+
+## Clean & Recode Data
+
+```{r}
+#merge datasets
+dpq_slq <- merge(dpq, slq, by="SEQN")
+full <- merge(demo, dpq_slq, by="SEQN")
+sub_dat <- full %>% select(-SDDSRVYR, -RIDSTATR, -RIDAGEMN, -DMDYRUSZ, -SIALANG, -SIAPROXY, -SIAINTRP, -FIALANG, -FIAPROXY, -FIAINTRP, -MIALANG, -MIAPROXY, -MIAINTRP, -AIALANGA, -RIDEXMON, -RIDEXPRG)
+
+#Recoding those that 'refused' or 'don't know' as missing (NA)
+nhanes_codes <- c(7, 77, 777, 77777, 9, 99, 999, 99999)
+recode_dat <- sub_dat %>% mutate(DMDBORN4=ifelse(DMDBORN4 %in% nhanes_codes, NA, DMDBORN4),
+                                 DMDEDUC2=ifelse(DMDEDUC2 %in% nhanes_codes, NA, DMDEDUC2),
+                                 DMDMARTZ=ifelse(DMDMARTZ %in% nhanes_codes, NA, DMDMARTZ),
+                                 SLQ300=ifelse(SLQ300 %in% as.character(nhanes_codes), "", SLQ300),
+                                 SLQ310=ifelse(SLQ310 %in% as.character(nhanes_codes), "", SLQ310),
+                                 SLQ320=ifelse(SLQ320 %in% as.character(nhanes_codes), "", SLQ320),
+                                 SLQ330=ifelse(SLQ330 %in% as.character(nhanes_codes), "", SLQ330),
+                                 SLQ030=ifelse(SLQ030 %in% nhanes_codes, NA, SLQ030),
+                                 SLQ040=ifelse(SLQ040 %in% nhanes_codes, NA, SLQ040),
+                                 SLQ050=ifelse(SLQ050 %in% nhanes_codes, NA, SLQ050),
+                                 SLQ120=ifelse(SLQ120 %in% nhanes_codes, NA, SLQ120),
+                                 DPQ010=ifelse(DPQ010 %in% nhanes_codes, NA, DPQ010),
+                                 DPQ020=ifelse(DPQ020 %in% nhanes_codes, NA, DPQ020),
+                                 DPQ030=ifelse(DPQ030 %in% nhanes_codes, NA, DPQ030),
+                                 DPQ040=ifelse(DPQ040 %in% nhanes_codes, NA, DPQ040),
+                                 DPQ050=ifelse(DPQ050 %in% nhanes_codes, NA, DPQ050),
+                                 DPQ060=ifelse(DPQ060 %in% nhanes_codes, NA, DPQ060),
+                                 DPQ070=ifelse(DPQ070 %in% nhanes_codes, NA, DPQ070),
+                                 DPQ080=ifelse(DPQ080 %in% nhanes_codes, NA, DPQ080),
+                                 DPQ090=ifelse(DPQ090 %in% nhanes_codes, NA, DPQ090),
+                                 DPQ100=ifelse(DPQ100 %in% nhanes_codes, NA, DPQ100))
+
+
+#changing time to a continuous variable from categorical (convert into hours)
+recode_dat <-
+  recode_dat %>% separate(
+    SLQ300,
+    sep = ":",
+    into = c("hour", "min"),
+    fill = "left",
+    convert = T
+  ) %>% mutate(min = ifelse(is.na(min), 0, min),
+               slq300_hours = (min / 60) + hour) %>% select(-hour,-min)
+
+recode_dat <-
+  recode_dat %>% separate(
+    SLQ310,
+    sep = ":",
+    into = c("hour", "min"),
+    fill = "left",
+    convert = T
+  ) %>% mutate(min = ifelse(is.na(min), 0, min),
+               slq310_hours = (min / 60) + hour) %>% select(-hour,-min)
+
+recode_dat <-
+  recode_dat %>% separate(
+    SLQ320,
+    sep = ":",
+    into = c("hour", "min"),
+    fill = "left",
+    convert = T
+  ) %>% mutate(min = ifelse(is.na(min), 0, min),
+               slq320_hours = (min / 60) + hour) %>% select(-hour,-min)
+
+recode_dat <-
+  recode_dat %>% separate(
+    SLQ330,
+    sep = ":",
+    into = c("hour", "min"),
+    fill = "left",
+    convert = T
+  ) %>% mutate(min = ifelse(is.na(min), 0, min),
+               slq330_hours = (min / 60) + hour) %>% select(-hour,-min)
+
+#adding value labels
+recode_dat$RIAGENDR <-
+  factor(recode_dat$RIAGENDR,
+         levels = c(1, 2),
+         labels = c("Male", "Female"))
+recode_dat$RIDRETH1 <-
+  factor(
+    recode_dat$RIDRETH1,
+    levels = c(1, 2, 3, 4, 5),
+    labels = c(
+      "Mexican American",
+      "Other Hispanic",
+      "Non-Hispanic White",
+      "Non-Hispanic Black",
+      "Other Race - Including Multi-Racial"
+    )
+  )
+recode_dat$RIDRETH3 <-
+  factor(
+    recode_dat$RIDRETH3,
+    levels = c(1, 2, 3, 4, 6, 7),
+    labels = c(
+      "Mexican American",
+      "Other Hispanic",
+      "Non-Hispanic White",
+      "Non-Hispanic Black",
+      "Non-Hispanic Asian",
+      "Other Race - Including Multi-Racial"
+    )
+  )
+recode_dat$DMDBORN4 <-
+  factor(
+    recode_dat$DMDBORN4,
+    levels = c(1, 2),
+    labels = c("Born in 50 US states or Washington, DC", "Others")
+  )
+recode_dat$DMDEDUC2 <-
+  factor(
+    recode_dat$DMDEDUC2,
+    levels = c(1, 2, 3, 4, 5),
+    labels = c(
+      "Less than 9th grade",
+      "9-11th grade (Includes 12th grade, no diploma)",
+      "High school graduate/GED or equivalent",
+      "Some college or AA degree",
+      "College graduate or above"
+    )
+  )
+recode_dat$DMDMARTZ <-
+  factor(
+    recode_dat$DMDMARTZ,
+    levels = c(1, 2, 3),
+    labels = c(
+      "Married/Living with partner",
+      "Widowed/Divorced/Separated",
+      "Never married"
+    )
+  )
+recode_dat$SLQ030 <-
+  factor(
+    recode_dat$SLQ030,
+    levels = c(0, 1, 2, 3),
+    labels = c(
+      "Never",
+      "Rarely: 1-2 Nights a week",
+      "Occasionally: 3-4 nights a week",
+      "Frequently: 5 or more nights a week"
+    )
+  )
+recode_dat$SLQ040 <-
+  factor(
+    recode_dat$SLQ040,
+    levels = c(0, 1, 2, 3),
+    labels = c(
+      "Never",
+      "Rarely: 1-2 Nights a week",
+      "Occasionally: 3-4 nights a week",
+      "Frequently: 5 or more nights a week"
+    )
+  )
+recode_dat$SLQ050 <-
+  factor(recode_dat$SLQ050,
+         levels = c(1, 2),
+         labels = c("Yes", "No"))
+recode_dat$SLQ120 <-
+  factor(
+    recode_dat$SLQ120,
+    levels = c(0, 1, 2, 3, 4),
+    labels = c(
+      "Never",
+      "Rarely: 1 time a month",
+      "Sometimes: 2-4 times a month",
+      "Often: 5-15 times a month",
+      "Almost always: 16-30 times a month"
+    )
+  )
+recode_dat$DPQ010 <-
+  factor(
+    recode_dat$DPQ010,
+    levels = c(0, 1, 2, 3),
+    labels = c(
+      "Not at all",
+      "Several days",
+      "More than half the days",
+      "Nearly every day"
+    )
+  )
+recode_dat$DPQ020 <-
+  factor(
+    recode_dat$DPQ020,
+    levels = c(0, 1, 2, 3),
+    labels = c(
+      "Not at all",
+      "Several days",
+      "More than half the days",
+      "Nearly every day"
+    )
+  )
+recode_dat$DPQ030 <-
+  factor(
+    recode_dat$DPQ030,
+    levels = c(0, 1, 2, 3),
+    labels = c(
+      "Not at all",
+      "Several days",
+      "More than half the days",
+      "Nearly every day"
+    )
+  )
+recode_dat$DPQ040 <-
+  factor(
+    recode_dat$DPQ040,
+    levels = c(0, 1, 2, 3),
+    labels = c(
+      "Not at all",
+      "Several days",
+      "More than half the days",
+      "Nearly every day"
+    )
+  )
+recode_dat$DPQ050 <-
+  factor(
+    recode_dat$DPQ050,
+    levels = c(0, 1, 2, 3),
+    labels = c(
+      "Not at all",
+      "Several days",
+      "More than half the days",
+      "Nearly every day"
+    )
+  )
+recode_dat$DPQ060 <-
+  factor(
+    recode_dat$DPQ060,
+    levels = c(0, 1, 2, 3),
+    labels = c(
+      "Not at all",
+      "Several days",
+      "More than half the days",
+      "Nearly every day"
+    )
+  )
+recode_dat$DPQ070 <-
+  factor(
+    recode_dat$DPQ070,
+    levels = c(0, 1, 2, 3),
+    labels = c(
+      "Not at all",
+      "Several days",
+      "More than half the days",
+      "Nearly every day"
+    )
+  )
+recode_dat$DPQ080 <-
+  factor(
+    recode_dat$DPQ080,
+    levels = c(0, 1, 2, 3),
+    labels = c(
+      "Not at all",
+      "Several days",
+      "More than half the days",
+      "Nearly every day"
+    )
+  )
+recode_dat$DPQ090 <-
+  factor(
+    recode_dat$DPQ090,
+    levels = c(0, 1, 2, 3),
+    labels = c(
+      "Not at all",
+      "Several days",
+      "More than half the days",
+      "Nearly every day"
+    )
+  )
+recode_dat$DPQ100 <-
+  factor(
+    recode_dat$DPQ100,
+    levels = c(0, 1, 2, 3),
+    labels = c(
+      "Not at all difficult",
+      "Somewhat difficult",
+      "Very difficult",
+      "Extremely difficult"
+    )
+  )
+
+
+#changing categorical variables that use dummy codes to be type character from numeric
+recode_dat <- recode_dat %>% mutate(DMDBORN4=as.character(DMDBORN4),
+                                    RIAGENDR=as.character(RIAGENDR),
+                                    RIDRETH1=as.character(RIDRETH1),
+                                    RIDRETH3=as.character(RIDRETH3),
+                                    DMDEDUC2=as.character(DMDEDUC2),
+                                    DMDMARTZ=as.character(DMDMARTZ),
+                                    SLQ030=as.character(SLQ030),
+                                    SLQ040=as.character(SLQ040),
+                                    SLQ050=as.character(SLQ050),
+                                    SLQ120=as.character(SLQ120),
+                                    DPQ010=as.character(DPQ010),
+                                    DPQ020=as.character(DPQ020),
+                                    DPQ030=as.character(DPQ030),
+                                    DPQ040=as.character(DPQ040),
+                                    DPQ050=as.character(DPQ050),
+                                    DPQ060=as.character(DPQ060),
+                                    DPQ070=as.character(DPQ070),
+                                    DPQ080=as.character(DPQ080),
+                                    DPQ090=as.character(DPQ090),
+                                    DPQ100=as.character(DPQ100)
+                                    )
+
+
+```
+
+## Dealing with Missing data
+Imputing missing categorical data with mode and continuous data with mean 
+
+```{r}
+#comparing number of observations of data set with missing data vs dropping observations with >= 1 missing variable
+no_na <- recode_dat %>% drop_na()
+
+#identifying and evaluating # of missing variables and values 
+missing <- colSums(is.na(recode_dat))
+missing_frame <- data.frame(t(missing))
+missing_vars <- missing_frame[,missing_frame>0]
+
+#function to find the mode for categorical variables 
+getMode <- function(data) {
+  data=data[nchar(as.character(data))>0]
+  unique_v <- unique(data)
+  unique_v[which.max(tabulate(match(data, unique_v)))]
+  
+}
+
+#imputing missing values
+imputed_dat <- recode_dat #replicating dataset
+
+for(cols in colnames(imputed_dat)) {
+  if (cols %in% names(imputed_dat[, sapply(imputed_dat, is.numeric)])) {
+    imputed_dat <-
+      imputed_dat %>% mutate(!!cols := replace(
+        !!rlang::sym(cols),
+        is.na(!!rlang::sym(cols)),
+        mean(!!rlang::sym(cols), na.rm = TRUE)
+      ))
+  } else {
+    imputed_dat <-
+      imputed_dat %>% mutate(!!cols := replace(
+        !!rlang::sym(cols),
+        !!rlang::sym(cols) == "" |
+          is.na(!!rlang::sym(cols)),
+        getMode(!!rlang::sym(cols))
+      ))
+  }
+}
+
+#check if there still any missing values
+missing <- colSums(is.na(imputed_dat))
+```
+
+## Data Exploration
+Looking at the demographic and characteristics of participants 
+
+```{r}
+#create summary statistics table 
+recode_dat2 <- recode_dat %>% drop_na()
+recode_dat2$type <- "missing"
+imputed_dat$type <- "non-missing"
+
+merged_dat <- rbind(recode_dat2,imputed_dat)
+
+
+merged_dat %>%
+  select(-SEQN,-WTINTPRP,-WTMECPRP,-SDMVPSU,-SDMVSTRA) %>%
+  tbl_summary(
+    by = type,
+    statistic = list(
+      all_continuous() ~ "{mean} ({sd})",
+      all_categorical() ~ "{n} ({p}%)"
+    ),
+    digits = all_continuous() ~ 2,
+    missing_text = "(Missing)",
+    label = c(
+      RIAGENDR ~ "Sex",
+      RIDAGEYR ~ "Age (years)",
+      RIDRETH1 ~ "Race/Hispanic Origin",
+      RIDRETH3 ~ "Race/Hispanic origin with NH Asian",
+      DMDBORN4 ~ "Country of birth",
+      DMDEDUC2 ~ "Education level (Adults 20+)",
+      DMDMARTZ ~ "Marital status",
+      INDFMPIR ~ "Ratio of family income to poverty",
+      SLD012 ~ "Sleep hours (weekdays/workdays)",
+      SLD013 ~ "Sleep hours (weekends)",
+      SLQ030 ~ "Snore Amount",
+      SLQ040 ~ "Frequency of snorting or stop breathing",
+      SLQ050 ~ "Told doctor trouble sleeping",
+      SLQ120 ~ "Frequency of feeling overly sleepy during day",
+      DPQ010 ~ "Have little interest in doing things",
+      DPQ020 ~ "Feeling down, depressed or hopeless",
+      DPQ030 ~ "Trouble sleeping or sleeping too much",
+      DPQ040 ~ "Feeling tired or having little energy",
+      DPQ050 ~ "Poor appetite or overeating",
+      DPQ060 ~ "Feeling bad about yourself",
+      DPQ070 ~ "Trouble concentrating on things",
+      DPQ080 ~ "Moving or speaking slowly or too fast",
+      DPQ090 ~ "Thoughts you would be better off dead",
+      DPQ100 ~ "Difficulty these problems have caused",
+      slq300_hours ~ "Sleep time on weekdays/workdays",
+      slq310_hours ~ "Wake time on weekdays/workdays",
+      slq320_hours ~ "Sleep time on weekends",
+      slq330_hours ~ "Wake time on weekends"
+    )
+  ) %>%
+  modify_header(label = "****") %>%
+  bold_labels() %>%
+  as_flex_table() %>%
+  bold(part = "header") %>%
+  font(fontname = 'Computer Modern')
+
+
+```
+
+```{r}
+#classifying depression using PHQ-9 depression screening instrument
+
+#create copy of dataset and change depression questions back to continuous so can calculate depression score
+to_numeric <- function(var) {
+  if(var=="Not at all") {
+    var <- 0
+  } else if (var=="Several days") {
+    var <- 1
+  } else if (var=="More than half the days") {
+    var <- 2
+  } else {
+    var <- 3
+  }
+ 
+}
+
+analysis_dat <- imputed_dat
+
+#converting depression questions back to numeric
+for(i in 1:nrow(analysis_dat)) {
+  analysis_dat$DPQ010_num[i] <- to_numeric(analysis_dat$DPQ010[i])
+}
+
+for(i in 1:nrow(analysis_dat)) {
+  analysis_dat$DPQ020_num[i] <- to_numeric(analysis_dat$DPQ020[i])
+}
+
+for(i in 1:nrow(analysis_dat)) {
+  analysis_dat$DPQ030_num[i] <- to_numeric(analysis_dat$DPQ030[i])
+}
+
+for(i in 1:nrow(analysis_dat)) {
+  analysis_dat$DPQ040_num[i] <- to_numeric(analysis_dat$DPQ040[i])
+}
+
+for(i in 1:nrow(analysis_dat)) {
+  analysis_dat$DPQ050_num[i] <- to_numeric(analysis_dat$DPQ050[i])
+}
+
+for(i in 1:nrow(analysis_dat)) {
+  analysis_dat$DPQ060_num[i] <- to_numeric(analysis_dat$DPQ060[i])
+}
+
+for(i in 1:nrow(analysis_dat)) {
+  analysis_dat$DPQ070_num[i] <- to_numeric(analysis_dat$DPQ070[i])
+}
+
+for(i in 1:nrow(analysis_dat)) {
+  analysis_dat$DPQ080_num[i] <- to_numeric(analysis_dat$DPQ080[i])
+}
+
+for(i in 1:nrow(analysis_dat)) {
+  analysis_dat$DPQ090_num[i] <- to_numeric(analysis_dat$DPQ090[i])
+}
+
+
+#calculating depression score
+analysis_dat <- analysis_dat %>% select(-type)
+analysis_dat <- analysis_dat %>% mutate(depression_score=rowSums(.[34:42]))
+
+#categorizing depression, based on PHQ-9 depression instrument
+for(i in 1:nrow(analysis_dat)) {
+  if(analysis_dat$depression_score[i] >= 0 & analysis_dat$depression_score[i] <= 4) {
+    analysis_dat$depression_status[i] <- 1 #minimal
+  } else if(analysis_dat$depression_score[i] >= 5 & analysis_dat$depression_score[i]<=9) {
+    analysis_dat$depression_status[i] <- 2 #mild
+  } else if(analysis_dat$depression_score[i]>=10 & analysis_dat$depression_score[i]<=14) {
+    analysis_dat$depression_status[i] <- 3 #moderate
+  } else if(analysis_dat$depression_score[i]>=15 & analysis_dat$depression_score[i]<=19) {
+    analysis_dat$depression_status[i] <- 4 #moderately severe
+  } else {
+    analysis_dat$depression_status[i] <- 5 #severe
+  }
+}
+
+
+#group by sleep disorder vs none  
+#Classification of sleep disorder:
+#https://www-sciencedirect-com.libproxy.lib.unc.edu/science/article/pii/S016503272101209X
+
+#SLD012 - sleep duration during weekdays  
+  #insufficient (sleepHr_status = 1) <6
+  #normal (sleepHr_status = 2) 6-8
+  #excessive (sleepHr_status = 3) >8
+#SLQ050 - Told doctor trouble sleeping
+#sleep debt: difference b/w weekdays and weekends (>=2 is bad)
+
+#categorizing sleep duration
+analysis_dat$sleepHr_status <-
+  ifelse(
+    analysis_dat$SLD012 < 6,
+    1,
+    ifelse(analysis_dat$SLD012 <= 6 & analysis_dat$SLD012 >= 8, 2, 3)
+  ) 
+
+#converting back to numeric for variable SLQ050
+for(i in 1:nrow(analysis_dat)) {
+  if(analysis_dat$SLQ050[i]=="Yes") {
+    analysis_dat$SLQ050_num[i] <- 1
+  } else {
+    analysis_dat$SLQ050_num[i] <- 2
+  }
+}
+
+#creating variable sleep_debt
+analysis_dat <- analysis_dat %>% mutate(sleep_debt=round((SLD013-SLD012),3))
+
+#categorizing sleep disorder, 0=no, 1=yes
+for(i in 1:nrow(analysis_dat)) {
+  if((analysis_dat$sleepHr_status[i] %in% c(1,3) & analysis_dat$SLQ050_num[i]==1) | analysis_dat$sleep_debt[i]>=2) {
+    analysis_dat$sleep_disorder[i] <- 1
+  } else {
+    analysis_dat$sleep_disorder[i] <- 0
+  }
+}
+
+#subsetting to only those suffering with sleep disorder
+sleepDisorder_dat <- analysis_dat[analysis_dat$sleep_disorder==1,]
+
+#creating dependent variable into binary 
+#0=no depression, 1=depression
+sleepDisorder_dat$outcome <- ifelse(sleepDisorder_dat$depression_score<=9,0,1) 
+
+```
+
+```{r}
+#descriptive statistics of sleep disorder data set
+sleepDisorder_dat %>%
+  select(
+    -SEQN,
+    -WTINTPRP,
+    -WTMECPRP,
+    -SDMVPSU,
+    -SDMVSTRA,
+    -DPQ010_num,
+    -DPQ020_num,
+    -DPQ030_num,
+    -DPQ040_num,
+    -DPQ050_num,
+    -DPQ060_num,
+    -DPQ070_num,
+    -DPQ080_num,
+    -DPQ090_num,
+    -sleepHr_status,
+    -SLQ050_num,
+    -sleep_disorder,
+    -depression_status
+  ) %>%
+  tbl_summary(
+    by = outcome,
+    statistic = list(
+      all_continuous() ~ "{mean} ({sd})",
+      all_categorical() ~ "{n} ({p}%)"
+    ),
+    digits = all_continuous() ~ 2,
+    missing_text = "(Missing)",
+    label = c(
+      RIAGENDR ~ "Gender",
+      RIDAGEYR ~ "Age (years)",
+      RIDRETH1 ~ "Race/Hispanic Origin",
+      RIDRETH3 ~ "Race/Hispanic origin with NH Asian",
+      DMDBORN4 ~ "Country of birth",
+      DMDEDUC2 ~ "Education level (Adults 20+)",
+      DMDMARTZ ~ "Marital status",
+      INDFMPIR ~ "Ratio of family income to poverty",
+      SLD012 ~ "Sleep hours (weekdays/workdays)",
+      SLD013 ~ "Sleep hours (weekends)",
+      SLQ030 ~ "Snore Amount",
+      SLQ040 ~ "Frequency of snorting or stop breathing",
+      SLQ050 ~ "Told doctor trouble sleeping",
+      SLQ120 ~ "Frequency of feeling overly sleepy during day",
+      DPQ010 ~ "Have little interest in doing things",
+      DPQ020 ~ "Feeling down, depressed or hopeless",
+      DPQ030 ~ "Trouble sleeping or sleeping too much",
+      DPQ040 ~ "Feeling tired or having little energy",
+      DPQ050 ~ "Poor appetite or overeating",
+      DPQ060 ~ "Feeling bad about yourself",
+      DPQ070 ~ "Trouble concentrating on things",
+      DPQ080 ~ "Moving or speaking slowly or too fast",
+      DPQ090 ~ "Thoughts you would be better off dead",
+      DPQ100 ~ "Difficulty these problems have caused",
+      slq300_hours ~ "Sleep time on weekdays/workdays",
+      slq310_hours ~ "Wake time on weekdays/workdays",
+      slq320_hours ~ "Sleep time on weekends",
+      slq330_hours ~ "Wake time on weekends",
+      depression_score ~ "Depression Score",
+      sleep_debt ~ "Sleep Debt (sleep time on weekends - weekdays)"
+    )
+  ) %>%
+  modify_header(label = "****",
+                stat_1 = "**No Depression**, N={n}",
+                stat_2 = "**Depression**,N={n}") %>%
+  bold_labels() %>%
+  as_flex_table() %>%
+  bold(part = "header") %>%
+  font(fontname = 'Computer Modern')
+
+
+```
+
+```{r, fig.width=12, fig.height=8}
+#look at correlations, relationships b/w sleep disorder and depression variables 
+ggpairs(
+  sleepDisorder_dat,
+  columns = c(
+    'SLD012',
+    'SLD013',
+    'slq300_hours',
+    'slq310_hours',
+    'slq320_hours',
+    'slq330_hours',
+    'depression_score',
+    'sleep_debt'
+  ),
+  ggplot2::aes(color = as.character(outcome))
+) 
+
+```
+
+## Using Machine Learning for Predictions
+
+```{r}
+#subsetting dataset to only keep variables of interest 
+sleep_dat <-
+  sleepDisorder_dat %>% select(
+    RIAGENDR,
+    RIDAGEYR,
+    RIDRETH3,
+    DMDEDUC2,
+    DMDMARTZ,
+    WTMECPRP,
+    INDFMPIR,
+    SLD012,
+    SLD013,
+    SLQ030,
+    SLQ040,
+    SLQ050,
+    SLQ120,
+    slq300_hours,
+    slq310_hours,
+    slq320_hours,
+    slq300_hours,
+    slq330_hours,
+    sleep_debt,
+    outcome
+  )
+
+#check balanced or imbalanced
+no_depression_num <- sum(sleep_dat$outcome == 0)
+depression_num <- sum(sleep_dat$outcome == 1)
+
+no_depression_num/depression_num
+
+```
+
+### CART without Pruning 
+Not using pruning due to imbalanced dataset
+```{r}
+#for reproducibility purposes
+set.seed(20)
+
+#create 5-fold Cross validation (CV)
+tt_indicies <- createFolds(y=sleep_dat$outcome,k=5)
+
+perF_conMatrix <- list()
+perF_roc_obs <- list()
+
+for(i in 1:length(tt_indicies)) {
+  #creating train and test sets
+  sleep_train <- sleep_dat[-tt_indicies[[i]],]
+  sleep_test <- sleep_dat[tt_indicies[[i]],]
+  
+  #fit tree
+  #WTMECPRP use this variable for sampling weights b/c sleep disorder and depression are from examination   portion (MEC)
+  cart <-
+    rpart(
+      outcome ~ RIAGENDR + RIDAGEYR + RIDRETH3 + DMDEDUC2 + DMDMARTZ + INDFMPIR +
+        SLD012 + SLD013 + SLQ030 + SLQ040 + SLQ050 + SLQ120 + slq300_hours + slq310_hours +
+        slq320_hours + slq330_hours + sleep_debt,
+      sleep_train,
+      weight = WTMECPRP
+    )
+  
+  #predict on test set 
+  sleep_test$cart_predict <- predict(cart,newdata=sleep_test)
+  
+  #add in test set predictions as binary factor
+  sleep_test <-
+    sleep_test %>% mutate(predict_outcome = factor(ifelse(cart_predict < 0.5, "No", "Yes")))
+  
+  #Creating confusion matrix
+  sleep_test$depression <- ifelse(sleep_test$outcome == 0, "No","Yes")
+  depression_outcome <- as.factor(sleep_test$depression)
+  conMatrix <- confusionMatrix(data=sleep_test$predict_outcome,reference=depression_outcome,positive="Yes")
+  
+  perF_conMatrix[[i]] <- conMatrix 
+  
+  #add ROC
+  perF_roc_obs[[i]] <- roc(response=sleep_test$outcome,predictor=sleep_test$cart_predict)
+  
+}
+
+#overall ROC and AUC
+responses <- list()
+predictors <- list()
+
+for (i in 1:length(perF_roc_obs)) {
+  responses[[i]] <- perF_roc_obs[[i]]$response
+  predictors[[i]] <- perF_roc_obs[[i]]$predictor
+}
+
+response_list <- do.call("c", responses)
+predictors_list <- do.call("c", predictors)
+
+roc_dat <-
+  data.frame(response = response_list, predictor = predictors_list)
+
+
+roc <- roc(roc_dat,
+           response,
+           predictor,
+           plot = TRUE,
+           print.auc = TRUE,
+           main="ROC curve with overall AUC")
+
+#average recall and precision
+precision_sum <- 0 
+recall_sum <- 0
+
+for(i in 1:length(perF_conMatrix)) {
+  precision_sum <- precision_sum + perF_conMatrix[[i]]$byClass[5]
+  recall_sum <- recall_sum + perF_conMatrix[[i]]$byClass[6]
+}
+
+cart_precision_mean <- precision_sum/length(perF_conMatrix)
+cart_recall_mean <- recall_sum/length(perF_conMatrix)
+
+```
+
+### Random Forest and Feature Importance
+Use error rate to select tuning parameter instead of MSE because of categorical outcome
+```{r}
+set.seed(20)
+
+imp_score <- list()
+perF_conMatrix <- list()
+perF_roc_obs <- list()
+
+for(i in 1:length(tt_indicies)) {
+  sleep_train <- sleep_dat[-tt_indicies[[i]],]
+  sleep_test <- sleep_dat[tt_indicies[[i]],]
+  
+  #outcome to factor
+  sleep_train$outcome <- as.factor(sleep_train$outcome)
+  
+  #fit random forest
+  reg_rf <-
+    randomForest(
+      outcome ~ RIAGENDR + RIDAGEYR + RIDRETH3 + DMDEDUC2 + DMDMARTZ + INDFMPIR +
+        SLD012 + SLD013 + SLQ030 + SLQ040 + SLQ050 + SLQ120 + slq300_hours + slq310_hours +
+        slq320_hours + slq330_hours + sleep_debt,
+      sleep_train,
+      importance = TRUE,
+      weights = WTMECPRP
+    )
+  
+  #try different parameter values for trees and number of features (m)
+  rf_err <- list() #random forest error rate
+  p <- ncol(sleep_train)-1 #number of predictors
+  trees <- c(50, 250, 500)
+  m <- c(p/2,sqrt(p))
+  count <- 1
+
+  for(j in 1:length(trees)) {
+    for(k in 1:length(m)) {
+      rf_pred_tune <-
+        randomForest(
+          outcome ~ RIAGENDR + RIDAGEYR + RIDRETH3 + DMDEDUC2 + DMDMARTZ + INDFMPIR +
+            SLD012 + SLD013 + SLQ030 + SLQ040 + SLQ050 + SLQ120 + slq300_hours + slq310_hours +
+            slq320_hours + slq330_hours + sleep_debt,
+          sleep_train,
+          ntree = trees[j],
+          mtry = m[k],
+          weights = WTMECPRP
+        )
+      rf_err[[count]] <-
+        data.frame("ntree" = trees[j],
+                   "pred_no" = m[k],
+                   "oob_error" = rf_pred_tune$err.rate[trees[j],1])
+
+      count <- count + 1
+    }
+  }
+  
+  rf_err_df <- do.call("rbind", rf_err)
+  
+  #refit on training using best no. of predictors at split
+  best_error <- which(rf_err_df$oob_error == min(rf_err_df$oob_error))
+  
+  #if multiple best errors, i.e. same oob error
+  best_error_num <- ifelse(length(best_error)>1, best_error[1],best_error)
+  
+  print(i)
+  reg_rf <- randomForest(
+    outcome ~ RIAGENDR + RIDAGEYR + RIDRETH3 + DMDEDUC2 + DMDMARTZ + INDFMPIR +
+      SLD012 + SLD013 + SLQ030 + SLQ040 + SLQ050 + SLQ120 + slq300_hours + slq310_hours +
+      slq320_hours + slq330_hours + sleep_debt,
+    sleep_train,
+    ntree = rf_err_df$ntree[best_error_num], 
+    mtry = rf_err_df$pred_no[best_error_num],
+    importance = TRUE,
+    weights = WTMECPRP
+  )
+  
+  #predict on test set
+  sleep_test$pred_rf <- predict(reg_rf,newdata=sleep_test)
+  
+  #create confusion matrix
+  perF_conMatrix[[i]] <- confusionMatrix(as.factor(sleep_test$pred_rf), as.factor(sleep_test$outcome)) 
+  
+  #add ROC
+  perF_roc_obs[[i]] <- roc(response=as.numeric(sleep_test$outcome),predictor=as.numeric(sleep_test$pred_rf))
+  
+  
+  #saving feature importance from RF model
+  imp_score[[i]] <- caret::varImp(reg_rf)
+  imp_score[[i]] <- imp_score[[i]] %>% rownames_to_column("var")
+  imp_score[[i]]$var <- imp_score[[i]]$var %>% as.factor()
+  
+}
+
+#overall ROC and AUC
+responses <- list()
+predictors <- list()
+
+for (i in 1:length(perF_roc_obs)) {
+  responses[[i]] <- perF_roc_obs[[i]]$response
+  predictors[[i]] <- perF_roc_obs[[i]]$predictor
+}
+
+response_list <- do.call("c", responses)
+predictors_list <- do.call("c", predictors)
+
+roc_dat <-
+  data.frame(response = response_list, predictor = predictors_list)
+
+
+roc <- roc(roc_dat,
+           response,
+           predictor,
+           plot = TRUE,
+           print.auc = TRUE,
+           main="ROC curve with overall AUC") 
+
+#average recall and precision
+precision_sum <- 0 
+recall_sum <- 0
+
+for(i in 1:length(perF_conMatrix)) {
+  precision_sum <- precision_sum + perF_conMatrix[[i]]$byClass[5]
+  recall_sum <- recall_sum + perF_conMatrix[[i]]$byClass[6]
+}
+
+rf_precision_mean <- precision_sum/length(perF_conMatrix)
+rf_recall_mean <- recall_sum/length(perF_conMatrix)
+
+
+#table of feature importance by fold and average
+imp_score_sub <- list()
+
+for(i in 1:length(imp_score)) {
+  imp_score_sub[[i]] <- subset(imp_score[[i]],select=-c(3))
+  colnames(imp_score_sub[[i]]) <- c("var",paste0("Fold",i))
+}
+
+imp_feat <- Reduce(function(...) merge(...,all=TRUE,by="var"),imp_score_sub)
+imp_feat$Average <- rowMeans(imp_feat[2:6])
+imp_feat <- imp_feat[,c(1,7,2,3,4,5,6)]
+
+imp_feat %>% flextable() %>% font(fontname="Computer Modern")
+
+#barplot for comparing variables importance 
+imp_bar <-
+  ggplot(data = imp_feat) + geom_bar(
+    stat = "identity",
+    mapping = aes(
+      x = Average,
+      y = reorder(var, Average),
+      fill = var
+    ),
+    show.legend = FALSE,
+    width = 1
+  ) + labs(x = "Average Variable Importance", y = "Predictor") + theme(panel.background = element_blank())
+
+imp_bar
+
+```
+
+### Comparing model results
+Did not use accuracy due to imbalanced data.
+```{r}
+avg <-
+  data.frame(
+    c("Random Forest", "CART"),
+    c(rf_precision_mean, cart_precision_mean),
+    c(rf_recall_mean, cart_recall_mean)
+  )
+colnames(avg) <- c("var","Average Precision","Average Recall")
+
+avg %>% flextable() %>% font(fontname = "Computer Modern") %>% set_header_labels(
+  var = "",
+  `Average Precision` = "Precision",
+  `Average Recall` = "Recall"
+)
+
+```
