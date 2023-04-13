@@ -20,6 +20,7 @@ library(ggplot2)
 library(GGally)
 library(varImp)
 library(pROC)
+library(PRROC)
 ```
 
 ## Read in datasets 
@@ -778,6 +779,10 @@ roc <- roc(roc_dat,
            print.auc = TRUE,
            main="ROC curve with overall AUC")
 
+#precision-recall curve and AUC
+pr <- pr.curve(roc_dat[roc_dat$response==1,]$predictor,roc_dat[roc_dat$response==0,]$predictor,curve = TRUE)
+plot(pr,color=1)
+
 #average recall and precision
 precision_sum <- 0 
 recall_sum <- 0
@@ -789,6 +794,9 @@ for(i in 1:length(perF_conMatrix)) {
 
 cart_precision_mean <- precision_sum/length(perF_conMatrix)
 cart_recall_mean <- recall_sum/length(perF_conMatrix)
+
+
+
 
 ```
 
@@ -906,6 +914,11 @@ roc <- roc(roc_dat,
            plot = TRUE,
            print.auc = TRUE,
            main="ROC curve with overall AUC") 
+
+#precision-recall curve and AUC
+pr <- pr.curve(roc_dat[roc_dat$response==1,]$predictor,roc_dat[roc_dat$response==0,]$predictor,curve = TRUE)
+plot(pr,color=1)
+
 
 #average recall and precision
 precision_sum <- 0 
