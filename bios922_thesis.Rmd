@@ -21,6 +21,7 @@ library(GGally)
 library(varImp)
 library(pROC)
 library(PRROC)
+library(xtable)
 ```
 
 ## Read in datasets 
@@ -581,27 +582,26 @@ sleepDisorder_dat$outcome <- ifelse(sleepDisorder_dat$depression_score<=9,0,1)
 
 ```{r}
 #descriptive statistics of sleep disorder data set
-sleepDisorder_dat %>%
-  select(
-    -SEQN,
-    -WTINTPRP,
-    -WTMECPRP,
-    -SDMVPSU,
-    -SDMVSTRA,
-    -DPQ010_num,
-    -DPQ020_num,
-    -DPQ030_num,
-    -DPQ040_num,
-    -DPQ050_num,
-    -DPQ060_num,
-    -DPQ070_num,
-    -DPQ080_num,
-    -DPQ090_num,
-    -sleepHr_status,
-    -SLQ050_num,
-    -sleep_disorder,
-    -depression_status
-  ) %>%
+sleep_tbl <- sleepDisorder_dat %>% select(
+  RIAGENDR,
+  RIDAGEYR,
+  RIDRETH3,
+  INDFMPIR,
+  DMDMARTZ,
+  DMDEDUC2,
+  SLQ050,
+  SLQ120,
+  slq330_hours,
+  sleep_debt,
+  SLD013,
+  SLD012,
+  slq310_hours,
+  slq300_hours,
+  slq320_hours,
+  SLQ040,
+  SLQ030,
+  outcome
+) %>% 
   tbl_summary(
     by = outcome,
     statistic = list(
@@ -609,13 +609,10 @@ sleepDisorder_dat %>%
       all_categorical() ~ "{n} ({p}%)"
     ),
     digits = all_continuous() ~ 2,
-    missing_text = "(Missing)",
     label = c(
       RIAGENDR ~ "Gender",
       RIDAGEYR ~ "Age (years)",
-      RIDRETH1 ~ "Race/Hispanic Origin",
       RIDRETH3 ~ "Race/Hispanic origin with NH Asian",
-      DMDBORN4 ~ "Country of birth",
       DMDEDUC2 ~ "Education level (Adults 20+)",
       DMDMARTZ ~ "Marital status",
       INDFMPIR ~ "Ratio of family income to poverty",
@@ -625,32 +622,23 @@ sleepDisorder_dat %>%
       SLQ040 ~ "Frequency of snorting or stop breathing",
       SLQ050 ~ "Told doctor trouble sleeping",
       SLQ120 ~ "Frequency of feeling overly sleepy during day",
-      DPQ010 ~ "Have little interest in doing things",
-      DPQ020 ~ "Feeling down, depressed or hopeless",
-      DPQ030 ~ "Trouble sleeping or sleeping too much",
-      DPQ040 ~ "Feeling tired or having little energy",
-      DPQ050 ~ "Poor appetite or overeating",
-      DPQ060 ~ "Feeling bad about yourself",
-      DPQ070 ~ "Trouble concentrating on things",
-      DPQ080 ~ "Moving or speaking slowly or too fast",
-      DPQ090 ~ "Thoughts you would be better off dead",
-      DPQ100 ~ "Difficulty these problems have caused",
       slq300_hours ~ "Sleep time on weekdays/workdays",
       slq310_hours ~ "Wake time on weekdays/workdays",
       slq320_hours ~ "Sleep time on weekends",
       slq330_hours ~ "Wake time on weekends",
-      depression_score ~ "Depression Score",
       sleep_debt ~ "Sleep Debt (sleep time on weekends - weekdays)"
     )
-  ) %>%
-  modify_header(label = "****",
-                stat_1 = "**No Depression**, N={n}",
-                stat_2 = "**Depression**,N={n}") %>%
-  bold_labels() %>%
-  as_flex_table() %>%
-  bold(part = "header") %>%
-  font(fontname = 'Computer Modern')
+  ) %>%   modify_header(label = "****",
+                 stat_1 = "**No Depression**, N={n}",
+                 stat_2 = "**Depression**,N={n}") %>%
+   bold_labels() %>%
+   as_flex_table() %>%
+   bold(part = "header") %>%
+   font(fontname = 'Computer Modern')
 
+
+sleep_tbl 
+#save_as_html(sleep_tbl,path="~/bios992/tbl2.html")
 
 ```
 
@@ -718,8 +706,11 @@ set.seed(20)
 #create 5-fold Cross validation (CV)
 tt_indicies <- createFolds(y=sleep_dat$outcome,k=5)
 
-perF_conMatrix <- list()
-perF_roc_obs <- list()
+correct_pred <- 0
+total_pred <- 0
+responses <- list()
+predictors <- list()
+fold_num <- 1
 
 for(i in 1:length(tt_indicies)) {
   #creating train and test sets
@@ -727,7 +718,7 @@ for(i in 1:length(tt_indicies)) {
   sleep_test <- sleep_dat[tt_indicies[[i]],]
   
   #fit tree
-  #WTMECPRP use this variable for sampling weights b/c sleep disorder and depression are from examination   portion (MEC)
+  #WTMECPRP use this variable for sampling weights b/c sleep disorder and depression are from examination portion (MEC)
   cart <-
     rpart(
       outcome ~ RIAGENDR + RIDAGEYR + RIDRETH3 + DMDEDUC2 + DMDMARTZ + INDFMPIR +
@@ -743,58 +734,56 @@ for(i in 1:length(tt_indicies)) {
   #add in test set predictions as binary factor
   sleep_test <-
     sleep_test %>% mutate(predict_outcome = factor(ifelse(cart_predict < 0.5, "No", "Yes")))
-  
+
   #Creating confusion matrix
   sleep_test$depression <- ifelse(sleep_test$outcome == 0, "No","Yes")
   depression_outcome <- as.factor(sleep_test$depression)
-  conMatrix <- confusionMatrix(data=sleep_test$predict_outcome,reference=depression_outcome,positive="Yes")
+  conMatrix <-
+    confusionMatrix(
+      data = sleep_test$predict_outcome,
+      reference = depression_outcome,
+      positive = "Yes"
+    )
   
-  perF_conMatrix[[i]] <- conMatrix 
+  #correct predictions = TP + TN
+  correct_pred <- correct_pred + conMatrix$table[1] + conMatrix$table[4]
   
-  #add ROC
-  perF_roc_obs[[i]] <- roc(response=sleep_test$outcome,predictor=sleep_test$cart_predict)
+  total <- 0
+  #total num of obs
+  for(j in 1:4) {
+    total <- total + conMatrix$table[j]
+  }
   
+  total_pred <- total_pred + total 
+  
+  #total number of responses from test set 
+  responses[[fold_num]] <- sleep_test$outcome
+  
+  #total number of predictors from test set 
+  predictors[[fold_num]] <- sleep_test$cart_predict
+  
+  fold_num <- fold_num + 1
+
 }
+
+#calculate overall accuracy
+#accuracy = (TP + TN)/(Total num of obs)
+cart_accuracy <- round(correct_pred/total_pred,3)
+
 
 #overall ROC and AUC
-responses <- list()
-predictors <- list()
-
-for (i in 1:length(perF_roc_obs)) {
-  responses[[i]] <- perF_roc_obs[[i]]$response
-  predictors[[i]] <- perF_roc_obs[[i]]$predictor
-}
-
 response_list <- do.call("c", responses)
 predictors_list <- do.call("c", predictors)
 
-roc_dat <-
+cart_roc_dat <-
   data.frame(response = response_list, predictor = predictors_list)
 
+cart_roc <- roc(cart_roc_dat, response, predictor,plot=TRUE)
+cart_auc <- round(auc(cart_roc),3)
 
-roc <- roc(roc_dat,
-           response,
-           predictor,
-           plot = TRUE,
-           print.auc = TRUE,
-           main="ROC curve with overall AUC")
-
-#precision-recall curve and AUC
-pr <- pr.curve(roc_dat[roc_dat$response==1,]$predictor,roc_dat[roc_dat$response==0,]$predictor,curve = TRUE)
-plot(pr,color=1)
-
-#average recall and precision
-precision_sum <- 0 
-recall_sum <- 0
-
-for(i in 1:length(perF_conMatrix)) {
-  precision_sum <- precision_sum + perF_conMatrix[[i]]$byClass[5]
-  recall_sum <- recall_sum + perF_conMatrix[[i]]$byClass[6]
-}
-
-cart_precision_mean <- precision_sum/length(perF_conMatrix)
-cart_recall_mean <- recall_sum/length(perF_conMatrix)
-
+#overall precision-recall AUC
+cart_pr_auc <-
+  pr.curve(cart_roc_dat[cart_roc_dat$response == 1, ]$predictor, cart_roc_dat[cart_roc_dat$response == 0, ]$predictor, curve = TRUE)$auc.integral
 
 
 
@@ -806,8 +795,13 @@ Use error rate to select tuning parameter instead of MSE because of categorical 
 set.seed(20)
 
 imp_score <- list()
-perF_conMatrix <- list()
-perF_roc_obs <- list()
+# perF_conMatrix <- list()
+# perF_roc_obs <- list()
+correct_pred <- 0
+total_pred <- 0
+responses <- list()
+predictors <- list()
+fold_num <- 1
 
 for(i in 1:length(tt_indicies)) {
   sleep_train <- sleep_dat[-tt_indicies[[i]],]
@@ -879,11 +873,28 @@ for(i in 1:length(tt_indicies)) {
   sleep_test$pred_rf <- predict(reg_rf,newdata=sleep_test)
   
   #create confusion matrix
-  perF_conMatrix[[i]] <- confusionMatrix(as.factor(sleep_test$pred_rf), as.factor(sleep_test$outcome)) 
+  conMatrix <-
+    confusionMatrix(as.factor(sleep_test$pred_rf),
+                    as.factor(sleep_test$outcome))
   
-  #add ROC
-  perF_roc_obs[[i]] <- roc(response=as.numeric(sleep_test$outcome),predictor=as.numeric(sleep_test$pred_rf))
+  #correct predictions = TP + TN
+  correct_pred <- correct_pred + conMatrix$table[1] + conMatrix$table[4]
   
+  total <- 0
+  #total num of obs
+  for(m in 1:4) {
+    total <- total + conMatrix$table[m]
+  }
+  
+  total_pred <- total_pred + total 
+  
+  #total number of responses from test set 
+  responses[[fold_num]] <- sleep_test$outcome
+  
+  #total number of predictors from test set 
+  predictors[[fold_num]] <- sleep_test$pred_rf
+  
+  fold_num <- fold_num + 1
   
   #saving feature importance from RF model
   imp_score[[i]] <- caret::varImp(reg_rf)
@@ -892,45 +903,27 @@ for(i in 1:length(tt_indicies)) {
   
 }
 
+#calculate overall accuracy
+rf_accuracy <- round(correct_pred/total_pred,3)
+
 #overall ROC and AUC
-responses <- list()
-predictors <- list()
-
-for (i in 1:length(perF_roc_obs)) {
-  responses[[i]] <- perF_roc_obs[[i]]$response
-  predictors[[i]] <- perF_roc_obs[[i]]$predictor
-}
-
 response_list <- do.call("c", responses)
 predictors_list <- do.call("c", predictors)
 
-roc_dat <-
-  data.frame(response = response_list, predictor = predictors_list)
+rf_roc_dat <-
+  data.frame(response = as.numeric(response_list), predictor = as.numeric(predictors_list))
 
 
-roc <- roc(roc_dat,
-           response,
-           predictor,
-           plot = TRUE,
-           print.auc = TRUE,
-           main="ROC curve with overall AUC") 
+rf_roc <- roc(rf_roc_dat,
+              response,
+              predictor,plot=TRUE) 
+rf_auc <- round(auc(rf_roc),3)
 
-#precision-recall curve and AUC
-pr <- pr.curve(roc_dat[roc_dat$response==1,]$predictor,roc_dat[roc_dat$response==0,]$predictor,curve = TRUE)
-plot(pr,color=1)
+#overall precision-recall AUC
+rf_pr_auc <-
+  pr.curve(rf_roc_dat[rf_roc_dat$response == 1, ]$predictor, rf_roc_dat[rf_roc_dat$response ==
+                                                                       0, ]$predictor, curve = TRUE)$auc.integral
 
-
-#average recall and precision
-precision_sum <- 0 
-recall_sum <- 0
-
-for(i in 1:length(perF_conMatrix)) {
-  precision_sum <- precision_sum + perF_conMatrix[[i]]$byClass[5]
-  recall_sum <- recall_sum + perF_conMatrix[[i]]$byClass[6]
-}
-
-rf_precision_mean <- precision_sum/length(perF_conMatrix)
-rf_recall_mean <- recall_sum/length(perF_conMatrix)
 
 
 #table of feature importance by fold and average
@@ -965,20 +958,27 @@ imp_bar
 ```
 
 ### Comparing model results
-Did not use accuracy due to imbalanced data.
 ```{r}
-avg <-
+#plot ROC curves 
+ggroc(list(RF = rf_roc, CART = cart_roc)) + theme(
+  panel.background = element_blank(),
+  panel.grid.major = element_line(color = "#DEDEDE")
+) + labs(linetype="Model") 
+
+
+
+#create table of ROC AUC, PR-AUC, accuracy 
+results_df <-
   data.frame(
     c("Random Forest", "CART"),
-    c(rf_precision_mean, cart_precision_mean),
-    c(rf_recall_mean, cart_recall_mean)
+    c(rf_accuracy, cart_accuracy),
+    c(rf_auc, cart_auc),
+    c(round(rf_pr_auc, 3), round(cart_pr_auc, 3))
   )
-colnames(avg) <- c("var","Average Precision","Average Recall")
+colnames(results_df) <- c("var","Accuracy","AUC","PR-AUC")
 
-avg %>% flextable() %>% font(fontname = "Computer Modern") %>% set_header_labels(
-  var = "",
-  `Average Precision` = "Precision",
-  `Average Recall` = "Recall"
-)
+results_df
 
+#convert to latex table
+#xtable(results_df)
 ```
