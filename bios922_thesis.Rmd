@@ -21,7 +21,6 @@ library(GGally)
 library(varImp)
 library(pROC)
 library(PRROC)
-library(xtable)
 ```
 
 ## Read in datasets 
@@ -448,8 +447,7 @@ merged_dat %>%
   modify_header(label = "****") %>%
   bold_labels() %>%
   as_flex_table() %>%
-  bold(part = "header") %>%
-  font(fontname = 'Computer Modern')
+  bold(part = "header")
 
 
 ```
@@ -582,7 +580,7 @@ sleepDisorder_dat$outcome <- ifelse(sleepDisorder_dat$depression_score<=9,0,1)
 
 ```{r}
 #descriptive statistics of sleep disorder data set
-sleep_tbl <- sleepDisorder_dat %>% select(
+sleepDisorder_dat %>% select(
   RIAGENDR,
   RIDAGEYR,
   RIDRETH3,
@@ -631,14 +629,9 @@ sleep_tbl <- sleepDisorder_dat %>% select(
   ) %>%   modify_header(label = "****",
                  stat_1 = "**No Depression**, N={n}",
                  stat_2 = "**Depression**,N={n}") %>%
-   bold_labels() %>%
-   as_flex_table() %>%
-   bold(part = "header") %>%
-   font(fontname = 'Computer Modern')
-
-
-sleep_tbl 
-#save_as_html(sleep_tbl,path="~/bios992/tbl2.html")
+  bold_labels() %>%
+  as_flex_table() %>%
+  bold(part="header")
 
 ```
 
@@ -778,7 +771,7 @@ predictors_list <- do.call("c", predictors)
 cart_roc_dat <-
   data.frame(response = response_list, predictor = predictors_list)
 
-cart_roc <- roc(cart_roc_dat, response, predictor,plot=TRUE)
+cart_roc <- roc(cart_roc_dat, response, predictor)
 cart_auc <- round(auc(cart_roc),3)
 
 #overall precision-recall AUC
@@ -857,7 +850,6 @@ for(i in 1:length(tt_indicies)) {
   #if multiple best errors, i.e. same oob error
   best_error_num <- ifelse(length(best_error)>1, best_error[1],best_error)
   
-  print(i)
   reg_rf <- randomForest(
     outcome ~ RIAGENDR + RIDAGEYR + RIDRETH3 + DMDEDUC2 + DMDMARTZ + INDFMPIR +
       SLD012 + SLD013 + SLQ030 + SLQ040 + SLQ050 + SLQ120 + slq300_hours + slq310_hours +
@@ -916,7 +908,7 @@ rf_roc_dat <-
 
 rf_roc <- roc(rf_roc_dat,
               response,
-              predictor,plot=TRUE) 
+              predictor) 
 rf_auc <- round(auc(rf_roc),3)
 
 #overall precision-recall AUC
@@ -938,7 +930,7 @@ imp_feat <- Reduce(function(...) merge(...,all=TRUE,by="var"),imp_score_sub)
 imp_feat$Average <- rowMeans(imp_feat[2:6])
 imp_feat <- imp_feat[,c(1,7,2,3,4,5,6)]
 
-imp_feat %>% flextable() %>% font(fontname="Computer Modern")
+imp_feat %>% flextable()
 
 #barplot for comparing variables importance 
 imp_bar <-
@@ -963,7 +955,7 @@ imp_bar
 ggroc(list(RF = rf_roc, CART = cart_roc)) + theme(
   panel.background = element_blank(),
   panel.grid.major = element_line(color = "#DEDEDE")
-) + labs(linetype="Model") 
+) 
 
 
 
@@ -978,7 +970,4 @@ results_df <-
 colnames(results_df) <- c("var","Accuracy","AUC","PR-AUC")
 
 results_df
-
-#convert to latex table
-#xtable(results_df)
 ```
