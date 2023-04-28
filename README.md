@@ -1,3 +1,5 @@
 # biostat_ms_thesis
-Predicting depression risk on those with sleep disorders using machine learning \
-Data from NHANES 2017- March 2020 pre-pandemic
+## Predicting Depression Risk Amongst Those with Sleep Disorders Using Machine Learning 
+
+Depression continues to widely effect public health, and has a strong link to sleep disorders. We aimed to predict depression risk among those who suffer from a sleep disorder. CART and random forest were the predictive models used to predict depression outcome of the participants classified as having a sleep disorder using demographic, depression screener, and sleep disorder datasets from NHANES 2017-March 2020 pre-pandemic data. The metrics used to evaluate model performance are receiving operating characteristic (ROC) curves, overall area under the curve (AUC), precision-recall AUC (PR-AUC), and accuracy. CARTs ROC curve curves more towards the top-left corner than random forest, which mirrors closer to a perfect ROC curve. Further, CART has a higher overall AUC of 0.71 and PR-AUC of 0.271, and the accuracies between CART and RF are practically the same. This suggests that CART may be a better performing model to predict depression risk. 
+
